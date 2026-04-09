@@ -7,6 +7,9 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+import base64
+import io
+from PIL import Image, ImageDraw
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -16,10 +19,33 @@ load_dotenv()
 
 from openai_service import localize_from_files
 from schemas import LocalizationResult
+
 from openai_service_grid_test import extract_grid_dot_coordinates
 from schemas_grid_test import GridDotResult
 
+from openai_service_dot_test import localize_dot_from_files
+from schemas_dot_test import DotLocalizationResult
+
 app = FastAPI(title="Floorplan Localizer")
+
+def draw_dot_on_floorplan(image_path: str, x: int, y: int) -> str:
+    with Image.open(image_path).convert("RGBA") as img:
+        draw = ImageDraw.Draw(img)
+
+        radius = max(8, min(img.size) // 80)
+
+        left = x - radius
+        top = y - radius
+        right = x + radius
+        bottom = y + radius
+
+        draw.ellipse((left, top, right, bottom), fill=(255, 0, 0, 255))
+        draw.ellipse((left - 2, top - 2, right + 2, bottom + 2), outline=(255, 255, 255, 255), width=2)
+
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        return encoded
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -44,6 +70,41 @@ def home() -> str:
         </form>
 
         <hr style="margin: 30px 0;">
+
+        <h1>Dot Test</h1>
+
+        <form id="dotTestForm" enctype="multipart/form-data" style="margin-bottom: 24px;">
+          <div style="margin-bottom: 12px;">
+            <label>Floorplan PNG:</label><br>
+            <input type="file" id="dotFloorplanInput" name="floorplan" accept="image/*" required>
+          </div>
+
+          <div style="margin-bottom: 12px;">
+            <label>Query image:</label><br>
+            <input type="file" id="dotQueryInput" name="query" accept="image/*" required>
+          </div>
+
+          <button type="submit">Run Dot Test</button>
+        </form>
+
+        <div style="display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap;">
+          <div style="flex: 1 1 650px; min-width: 300px;">
+            <h2>Annotated Floorplan</h2>
+            <img
+              id="dotResultImage"
+              alt="Annotated floorplan"
+              style="width: 100%; border: 1px solid #ccc; display: none;"
+            />
+          </div>
+
+          <div style="flex: 0 0 300px;">
+            <h2>Dot Test Result</h2>
+            <div
+              id="dotResultBox"
+              style="border: 1px solid #ccc; padding: 12px; min-height: 80px; background: #f9f9f9;"
+            >No result yet.</div>
+          </div>
+        </div>
 
         <div style="display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap;">
           <div style="flex: 1 1 650px; min-width: 300px;">
@@ -157,6 +218,58 @@ def home() -> str:
               resultBox.textContent = "Error: " + error.message;
             }
           });
+
+          const dotTestForm = document.getElementById("dotTestForm");
+          const dotFloorplanInput = document.getElementById("dotFloorplanInput");
+          const dotQueryInput = document.getElementById("dotQueryInput");
+          const dotResultImage = document.getElementById("dotResultImage");
+          const dotResultBox = document.getElementById("dotResultBox");
+
+          dotTestForm.addEventListener("submit", async function (event) {
+            event.preventDefault();
+
+            const floorplanFile = dotFloorplanInput.files[0];
+            const queryFile = dotQueryInput.files[0];
+
+            if (!floorplanFile || !queryFile) {
+              dotResultBox.textContent = "Please select both a floorplan image and a query image.";
+              return;
+            }
+
+            const formData = new FormData();
+            formData.append("floorplan", floorplanFile);
+            formData.append("query", queryFile);
+
+            dotResultBox.textContent = "Running dot test...";
+            dotResultImage.style.display = "none";
+            dotResultImage.src = "";
+
+            try {
+              const response = await fetch("/test-dot", {
+                method: "POST",
+                body: formData
+              });
+
+              const data = await response.json();
+
+              if (!response.ok) {
+                dotResultBox.textContent = "Error: " + (data.detail || "Unknown error");
+                return;
+              }
+
+              dotResultBox.innerHTML = `
+                <div style="margin-bottom: 10px;"><strong>Predicted dot location</strong></div>
+                <div><strong>dot_x:</strong> ${data.dot_x}</div>
+                <div><strong>dot_y:</strong> ${data.dot_y}</div>
+                <div style="margin-top: 10px;"><strong>Reasoning:</strong> ${data.reasoning}</div>
+              `;
+
+              dotResultImage.src = "data:image/png;base64," + data.annotated_image_base64;
+              dotResultImage.style.display = "block";
+            } catch (error) {
+              dotResultBox.textContent = "Error: " + error.message;
+            }
+          });
         </script>
       </body>
     </html>
@@ -221,6 +334,56 @@ async def test_grid(
         result = extract_grid_dot_coordinates(floorplan_path)
         print("GRID TEST RESULT:", result.model_dump())
         return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@app.post("/test-dot")
+async def test_dot(
+    floorplan: UploadFile = File(...),
+    query: UploadFile = File(...),
+):
+    if not os.getenv("OPENAI_API_KEY"):
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not set.")
+
+    if not floorplan.content_type or not floorplan.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Floorplan must be an image file for dot test (recommended: PNG).")
+
+    if not query.content_type or not query.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Query must be an image file.")
+
+    temp_dir = tempfile.mkdtemp(prefix="dot_test_")
+
+    try:
+        floorplan_ext = Path(floorplan.filename or "floorplan.png").suffix or ".png"
+        query_ext = Path(query.filename or "query.jpg").suffix or ".jpg"
+
+        floorplan_path = os.path.join(temp_dir, f"floorplan{floorplan_ext}")
+        query_path = os.path.join(temp_dir, f"query{query_ext}")
+
+        with open(floorplan_path, "wb") as f:
+            shutil.copyfileobj(floorplan.file, f)
+
+        with open(query_path, "wb") as f:
+            shutil.copyfileobj(query.file, f)
+
+        result = localize_dot_from_files(floorplan_path, query_path)
+
+        annotated_image_base64 = draw_dot_on_floorplan(
+            floorplan_path,
+            result.dot_x,
+            result.dot_y,
+        )
+
+        return {
+            "dot_x": result.dot_x,
+            "dot_y": result.dot_y,
+            "reasoning": result.reasoning,
+            "annotated_image_base64": annotated_image_base64,
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

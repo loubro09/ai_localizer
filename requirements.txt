@@ -4,3 +4,4 @@ python-multipart
 openai
 pydantic
 python-dotenv
+pdf2image

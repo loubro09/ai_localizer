@@ -20,6 +20,8 @@ Innehåll:
 
 OPENAI_API_KEY=din_api_nyckel_här
 
+Aktivera useEnv i settings.
+
 ## 3. Kontrollera att Python 3 finns installerat
 
 Öppna Terminal och kör:

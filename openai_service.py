@@ -6,6 +6,7 @@ for processing. The response is parsed into a LocalizationResult schema, which i
 estimated coordinates and reasoning for the localization.
 """
 import base64
+import json
 import mimetypes
 from pathlib import Path
 
@@ -27,22 +28,9 @@ MODEL_PRICING_PER_1M = {
     "gpt-5.4-nano": {"input": 0.20, "output": 1.25},
 }
 
-"""
-Helper function to convert an image file to a data URL. This is necessary because the OpenAI API 
-expects images to be sent as URLs, and using data URLs allows us to include the image data 
-directly in the request without needing to host the images on an external server.
-"""
-def _image_to_data_url(path: str) -> str:
-    file_path = Path(path)
-    mime_type, _ = mimetypes.guess_type(file_path.name)
-    if mime_type is None:
-        mime_type = "application/octet-stream"
-
-    with open(file_path, "rb") as f:
-        encoded = base64.b64encode(f.read()).decode("utf-8")
-
-    return f"data:{mime_type};base64,{encoded}"
-
+def _file_to_base64(path: str) -> str:
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
 
 def calculate_request_cost(model: str, usage: Any) -> dict:
     pricing = MODEL_PRICING_PER_1M.get(model)
@@ -72,37 +60,52 @@ def calculate_request_cost(model: str, usage: Any) -> dict:
         "estimated_cost_usd": round(input_cost + output_cost, 6),
     }
 
-"""
-Main function to localize the query image on the floorplan. It takes the file paths of the floorplan and query images, converts them to data URLs, and sends them to the OpenAI
-API for processing. The response is parsed into a LocalizationResult schema, which includes the estimated coordinates and reasoning for the localization.
-"""
-def localize_from_images(floorplan_path: str, query_path: str) -> LocalizationResult:
-    floorplan_data_url = _image_to_data_url(floorplan_path)
-    query_data_url = _image_to_data_url(query_path)
+def localize_from_files(floorplan_pdf_path: str, query_path: str) -> LocalizationResult:
+    query_path_obj = Path(query_path)
+
+    query_mime_type, _ = mimetypes.guess_type(query_path_obj.name)
+    if query_mime_type is None:
+        query_mime_type = "image/jpeg"
+
+    floorplan_b64 = _file_to_base64(floorplan_pdf_path)
+    query_b64 = _file_to_base64(query_path)
 
     response = client.responses.parse(
         model=MODEL_NAME,
         input=[
             {
                 "role": "system",
-                "content": (
-                    "You are an indoor localization assistant. "
-                    "You will receive two images: "
-                    "1) a floorplan image and "
-                    "2) a query image taken somewhere inside that building. "
-                    "The floorplan uses a 50x50 coordinate grid. "
-                    "Return the top 5 most likely candidate camera locations. "
-                    "Coordinate rules: "
-                    "x is horizontal from left to right, integer 0 to 49. "
-                    "y is vertical from top to bottom, integer 0 to 49. "
-                    "(0,0) is the top-left corner of the floorplan. "
-                    "(49,49) is the bottom-right corner. "
-                    "Also return a confidence score between 0 and 1 for each candidate. "
-                    "Sort candidates from highest confidence to lowest confidence. "
-                    "Do not return normalized coordinates. "
-                    "Do not return pixel coordinates. "
-                    "Use only the 50x50 grid."
-                ),
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": (
+                            "You are an indoor localization assistant. "
+                            "You will receive: "
+                            "1) a floorplan PDF and "
+                            "2) a query image taken somewhere inside that building. "
+
+                            "The floorplan contains a visible background grid. "
+                            "This grid is the coordinate system and must be used exactly as shown. "
+                            "Each grid square corresponds to approximately one meter. "
+
+                            "The coordinate origin is the top-left grid cell of the floorplan image. "
+                            "The top-left grid cell is (1,1). "
+                            "x increases from left to right and y increases from top to bottom. "
+
+                            "IMPORTANT: "
+                            "Use the full page grid, not just the building footprint. "
+                            "Do NOT create or assume a new grid. "
+                            "Do NOT normalize or rescale coordinates. "
+                            "Do NOT estimate coordinates relative only to rooms or building geometry. "
+
+                            "Return the top 5 most likely candidate camera locations. "
+                            "Each candidate must use integer grid coordinates only. "
+                            "Each candidate must include x, y, confidence, and reasoning. "
+                            "Confidence must be between 0 and 1. "
+                            "Sort candidates from highest confidence to lowest confidence."
+                        )
+                    }
+                ],
             },
             {
                 "role": "user",
@@ -110,21 +113,35 @@ def localize_from_images(floorplan_path: str, query_path: str) -> LocalizationRe
                     {
                         "type": "input_text",
                         "text": (
-                            "The first image is the floorplan. "
-                            "The second image is the query image. "
-                            "Analyze visible spatial cues such as walls, doors, openings, corridor shape, "
-                            "room layout, furniture, floor type, and lighting. "
-                            "Match the query image to the floorplan and return the 5 most likely positions on the 50x50 grid. "
+                            "The PDF is the floorplan and includes a visible background grid. "
+                            "The image is the query image. "
+
+                            "First identify the most likely location in the floorplan "
+                            "(room, corridor, or area). "
+
+                            "Then map that location to the visible page grid and return the grid cell "
+                            "that best represents the camera position. "
+
+                            "The coordinate system is one-based, with the top-left grid cell at (1,1). "
+                            "x increases to the right and y increases downward. "
+
+                            "Each grid cell corresponds to approximately one meter. "
+                            "Different floorplans may have different sizes. "
+
+                            "IMPORTANT: "
+                            "Return the grid cell of the camera position, not the center of the room. "
+
                             "Each candidate must include x, y, confidence, and a short reasoning."
-                        ),
+                        )
+                    },
+                    {
+                        "type": "input_file",
+                        "filename": "floorplan.pdf",
+                        "file_data": f"data:application/pdf;base64,{floorplan_b64}",
                     },
                     {
                         "type": "input_image",
-                        "image_url": floorplan_data_url,
-                    },
-                    {
-                        "type": "input_image",
-                        "image_url": query_data_url,
+                        "image_url": f"data:{query_mime_type};base64,{query_b64}",
                     },
                 ],
             },
@@ -141,5 +158,11 @@ def localize_from_images(floorplan_path: str, query_path: str) -> LocalizationRe
     print("Reasoning tokens:", usage_info["reasoning_tokens"])
     print("Estimated cost (USD):", usage_info["estimated_cost_usd"])
     print("================================\n")
+
+    print("OUTPUT_PARSED:", repr(response.output_parsed))
+    print("OUTPUT_TEXT:", repr(response.output_text))
+
+    if response.output_parsed is None:
+        raise ValueError(f"Model returned no parsed output. Raw text: {response.output_text!r}")
 
     return response.output_parsed

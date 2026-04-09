@@ -7,12 +7,11 @@ from typing import List
 from pydantic import BaseModel, Field
 
 """
-Schema for a single location candidate, which includes the x and y coordinates on the 50x50 grid, a confidence score, and a short reasoning explanation.
-The confidence score is a float between 0 and 1, where 1 indicates the highest confidence in the candidate location.
+Schema for a single location candidate, which includes the x and y coordinates on the floorplan grid, a confidence score, and a short reasoning explanation.
 """
 class LocationCandidate(BaseModel):
-    x: int = Field(..., ge=0, le=49, description="X coordinate on the 50x50 grid")
-    y: int = Field(..., ge=0, le=49, description="Y coordinate on the 50x50 grid")
+    x: int = Field(..., ge=1, description="X coordinate on the floorplan grid")
+    y: int = Field(..., ge=1, description="Y coordinate on the floorplan grid")
     confidence: float = Field(
         ...,
         ge=0.0,

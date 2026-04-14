@@ -8,6 +8,11 @@ from PIL import Image
 
 from schemas_dot_test import DotLocalizationResult
 
+#from prompts.prompt_area_first import SYSTEM_PROMPT, USER_PROMPT
+#from prompts.prompt_coordinate_strict import SYSTEM_PROMPT, USER_PROMPT
+#rom prompts.prompt_direct_pixel import SYSTEM_PROMPT, USER_PROMPT
+from prompts.prompt_semantic_geometric import SYSTEM_PROMPT, USER_PROMPT
+
 client = OpenAI()
 
 MODEL_NAME = "gpt-5.4"
@@ -81,28 +86,11 @@ def localize_dot_from_files(floorplan_image_path: str, query_path: str) -> DotLo
                 "content": [
                     {
                         "type": "input_text",
-                        "text": (
-                            "You are an indoor localization assistant. "
-                            "You will receive: "
-                            "1) a floorplan image and "
-                            "2) a query image taken somewhere inside that building. "
-                            "Your task is to estimate the most likely camera position on the floorplan image. "
-
-                            f"The floorplan image resolution is {width} pixels wide and {height} pixels high. "
-                            "Return exactly one best location as pixel coordinates on the floorplan image. "
-
-                            "IMPORTANT: "
-                            "The coordinates must be image pixel coordinates, not room-relative coordinates. "
-                            "Use the full image coordinate system. "
-                            "The top-left pixel is (0,0). "
-                            "x increases to the right. "
-                            "y increases downward. "
-
-                            f"dot_x must be between 0 and {width - 1}. "
-                            f"dot_y must be between 0 and {height - 1}. "
-
-                            "Do not return multiple candidates. "
-                            "Return only the single best dot location and a short reasoning."
+                        "text": SYSTEM_PROMPT.format(
+                            width=width,
+                            height=height,
+                            max_x=width - 1,
+                            max_y=height - 1,
                         )
                     }
                 ],
@@ -112,18 +100,7 @@ def localize_dot_from_files(floorplan_image_path: str, query_path: str) -> DotLo
                 "content": [
                     {
                         "type": "input_text",
-                        "text": (
-                            "The first image is the floorplan. "
-                            "The second image is the query photo taken somewhere in that building. "
-
-                            "Identify the most likely room, corridor, or area first. "
-                            "Then estimate the best single camera position on the floorplan image. "
-
-                            "Return the result as: "
-                            "dot_x, dot_y, and reasoning. "
-
-                            "The returned point should represent the camera position as closely as possible."
-                        )
+                        "text": USER_PROMPT
                     },
                     {
                         "type": "input_image",

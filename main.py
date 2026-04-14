@@ -28,6 +28,18 @@ from schemas_dot_test import DotLocalizationResult
 
 app = FastAPI(title="Floorplan Localizer")
 
+def pixel_to_grid(
+    dot_x: int,
+    dot_y: int,
+    width: int,
+    height: int,
+    max_grid_x: int = 54,
+    max_grid_y: int = 44,
+) -> tuple[int, int]:
+    grid_x = round(dot_x / (width - 1) * max_grid_x)
+    grid_y = round(dot_y / (height - 1) * max_grid_y)
+    return grid_x, grid_y
+
 def draw_dot_on_floorplan(image_path: str, x: int, y: int) -> str:
     with Image.open(image_path).convert("RGBA") as img:
         draw = ImageDraw.Draw(img)
@@ -261,6 +273,8 @@ def home() -> str:
                 <div style="margin-bottom: 10px;"><strong>Predicted dot location</strong></div>
                 <div><strong>dot_x:</strong> ${data.dot_x}</div>
                 <div><strong>dot_y:</strong> ${data.dot_y}</div>
+                <div><strong>grid_x:</strong> ${data.grid_x}</div>
+                <div><strong>grid_y:</strong> ${data.grid_y}</div>
                 <div style="margin-top: 10px;"><strong>Reasoning:</strong> ${data.reasoning}</div>
               `;
 
@@ -372,6 +386,16 @@ async def test_dot(
 
         result = localize_dot_from_files(floorplan_path, query_path)
 
+        with Image.open(floorplan_path) as img:
+          width, height = img.size
+
+          grid_x, grid_y = pixel_to_grid(
+              result.dot_x,
+              result.dot_y,
+              width,
+              height,
+          )
+
         annotated_image_base64 = draw_dot_on_floorplan(
             floorplan_path,
             result.dot_x,
@@ -379,11 +403,13 @@ async def test_dot(
         )
 
         return {
-            "dot_x": result.dot_x,
-            "dot_y": result.dot_y,
-            "reasoning": result.reasoning,
-            "annotated_image_base64": annotated_image_base64,
-        }
+          "dot_x": result.dot_x,
+          "dot_y": result.dot_y,
+          "grid_x": grid_x,
+          "grid_y": grid_y,
+          "reasoning": result.reasoning,
+          "annotated_image_base64": annotated_image_base64,
+      }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

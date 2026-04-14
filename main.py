@@ -9,10 +9,12 @@ import tempfile
 from pathlib import Path
 import base64
 import io
-from PIL import Image, ImageDraw
+import math
+from typing import Optional
 
+from PIL import Image, ImageDraw
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 
 load_dotenv()
@@ -28,6 +30,7 @@ from schemas_dot_test import DotLocalizationResult
 
 app = FastAPI(title="Floorplan Localizer")
 
+
 def pixel_to_grid(
     dot_x: int,
     dot_y: int,
@@ -40,19 +43,76 @@ def pixel_to_grid(
     grid_y = round(dot_y / (height - 1) * max_grid_y)
     return grid_x, grid_y
 
-def draw_dot_on_floorplan(image_path: str, x: int, y: int) -> str:
+
+def grid_to_pixel(
+    grid_x: int,
+    grid_y: int,
+    width: int,
+    height: int,
+    max_grid_x: int = 54,
+    max_grid_y: int = 44,
+) -> tuple[int, int]:
+    pixel_x = round(grid_x / max_grid_x * (width - 1))
+    pixel_y = round(grid_y / max_grid_y * (height - 1))
+    return pixel_x, pixel_y
+
+
+def calculate_grid_error(
+    predicted_x: int,
+    predicted_y: int,
+    actual_x: int,
+    actual_y: int,
+) -> dict:
+    dx = predicted_x - actual_x
+    dy = predicted_y - actual_y
+    euclidean_error = math.sqrt(dx**2 + dy**2)
+    manhattan_error = abs(dx) + abs(dy)
+
+    return {
+        "dx": dx,
+        "dy": dy,
+        "euclidean_error_m": round(euclidean_error, 3),
+        "manhattan_error_m": manhattan_error,
+    }
+
+
+def draw_dots_on_floorplan(
+    image_path: str,
+    predicted_x: int,
+    predicted_y: int,
+    actual_x: Optional[int] = None,
+    actual_y: Optional[int] = None,
+) -> str:
     with Image.open(image_path).convert("RGBA") as img:
         draw = ImageDraw.Draw(img)
-
         radius = max(8, min(img.size) // 80)
 
-        left = x - radius
-        top = y - radius
-        right = x + radius
-        bottom = y + radius
+        # Predicted dot = red
+        left = predicted_x - radius
+        top = predicted_y - radius
+        right = predicted_x + radius
+        bottom = predicted_y + radius
 
         draw.ellipse((left, top, right, bottom), fill=(255, 0, 0, 255))
-        draw.ellipse((left - 2, top - 2, right + 2, bottom + 2), outline=(255, 255, 255, 255), width=2)
+        draw.ellipse(
+            (left - 2, top - 2, right + 2, bottom + 2),
+            outline=(255, 255, 255, 255),
+            width=2,
+        )
+
+        # Actual dot = green
+        if actual_x is not None and actual_y is not None:
+            left = actual_x - radius
+            top = actual_y - radius
+            right = actual_x + radius
+            bottom = actual_y + radius
+
+            draw.ellipse((left, top, right, bottom), fill=(0, 180, 0, 255))
+            draw.ellipse(
+                (left - 2, top - 2, right + 2, bottom + 2),
+                outline=(255, 255, 255, 255),
+                width=2,
+            )
 
         buffer = io.BytesIO()
         img.save(buffer, format="PNG")
@@ -96,6 +156,17 @@ def home() -> str:
             <input type="file" id="dotQueryInput" name="query" accept="image/*" required>
           </div>
 
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 320px; margin-bottom: 12px;">
+            <div>
+              <label>Actual X (optional):</label><br>
+              <input type="number" id="actualDotX" name="actual_x">
+            </div>
+            <div>
+              <label>Actual Y (optional):</label><br>
+              <input type="number" id="actualDotY" name="actual_y">
+            </div>
+          </div>
+
           <button type="submit">Run Dot Test</button>
         </form>
 
@@ -107,9 +178,12 @@ def home() -> str:
               alt="Annotated floorplan"
               style="width: 100%; border: 1px solid #ccc; display: none;"
             />
+            <div style="margin-top: 8px; color: #555;">
+              Red = predicted, Green = actual
+            </div>
           </div>
 
-          <div style="flex: 0 0 300px;">
+          <div style="flex: 0 0 320px;">
             <h2>Dot Test Result</h2>
             <div
               id="dotResultBox"
@@ -118,7 +192,39 @@ def home() -> str:
           </div>
         </div>
 
-        <div style="display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap;">
+        <hr style="margin: 30px 0;">
+
+        <h1>Error Calculator</h1>
+
+        <form id="errorForm" style="margin-bottom: 24px;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 420px;">
+            <div>
+              <label>Predicted X:</label><br>
+              <input type="number" id="predictedX" required>
+            </div>
+            <div>
+              <label>Predicted Y:</label><br>
+              <input type="number" id="predictedY" required>
+            </div>
+            <div>
+              <label>Actual X:</label><br>
+              <input type="number" id="actualX" required>
+            </div>
+            <div>
+              <label>Actual Y:</label><br>
+              <input type="number" id="actualY" required>
+            </div>
+          </div>
+
+          <button type="submit" style="margin-top: 12px;">Calculate Error</button>
+        </form>
+
+        <div
+          id="errorResultBox"
+          style="border: 1px solid #ccc; padding: 12px; min-height: 80px; background: #f9f9f9; max-width: 420px;"
+        >No result yet.</div>
+
+        <div style="display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; margin-top: 30px;">
           <div style="flex: 1 1 650px; min-width: 300px;">
             <h2>Floorplan Preview</h2>
             <iframe
@@ -234,6 +340,8 @@ def home() -> str:
           const dotTestForm = document.getElementById("dotTestForm");
           const dotFloorplanInput = document.getElementById("dotFloorplanInput");
           const dotQueryInput = document.getElementById("dotQueryInput");
+          const actualDotXInput = document.getElementById("actualDotX");
+          const actualDotYInput = document.getElementById("actualDotY");
           const dotResultImage = document.getElementById("dotResultImage");
           const dotResultBox = document.getElementById("dotResultBox");
 
@@ -242,6 +350,8 @@ def home() -> str:
 
             const floorplanFile = dotFloorplanInput.files[0];
             const queryFile = dotQueryInput.files[0];
+            const actualDotX = actualDotXInput.value;
+            const actualDotY = actualDotYInput.value;
 
             if (!floorplanFile || !queryFile) {
               dotResultBox.textContent = "Please select both a floorplan image and a query image.";
@@ -251,6 +361,13 @@ def home() -> str:
             const formData = new FormData();
             formData.append("floorplan", floorplanFile);
             formData.append("query", queryFile);
+
+            if (actualDotX !== "") {
+              formData.append("actual_x", actualDotX);
+            }
+            if (actualDotY !== "") {
+              formData.append("actual_y", actualDotY);
+            }
 
             dotResultBox.textContent = "Running dot test...";
             dotResultImage.style.display = "none";
@@ -269,6 +386,21 @@ def home() -> str:
                 return;
               }
 
+              let extraHtml = "";
+              if (data.actual_grid_x !== null && data.actual_grid_y !== null) {
+                extraHtml = `
+                  <hr style="margin: 10px 0;">
+                  <div><strong>actual_grid_x:</strong> ${data.actual_grid_x}</div>
+                  <div><strong>actual_grid_y:</strong> ${data.actual_grid_y}</div>
+                  <div><strong>actual_pixel_x:</strong> ${data.actual_pixel_x}</div>
+                  <div><strong>actual_pixel_y:</strong> ${data.actual_pixel_y}</div>
+                  <div><strong>dx:</strong> ${data.dx}</div>
+                  <div><strong>dy:</strong> ${data.dy}</div>
+                  <div><strong>Euclidean error:</strong> ${data.euclidean_error_m} m</div>
+                  <div><strong>Manhattan error:</strong> ${data.manhattan_error_m} m</div>
+                `;
+              }
+
               dotResultBox.innerHTML = `
                 <div style="margin-bottom: 10px;"><strong>Predicted dot location</strong></div>
                 <div><strong>dot_x:</strong> ${data.dot_x}</div>
@@ -276,6 +408,7 @@ def home() -> str:
                 <div><strong>grid_x:</strong> ${data.grid_x}</div>
                 <div><strong>grid_y:</strong> ${data.grid_y}</div>
                 <div style="margin-top: 10px;"><strong>Reasoning:</strong> ${data.reasoning}</div>
+                ${extraHtml}
               `;
 
               dotResultImage.src = "data:image/png;base64," + data.annotated_image_base64;
@@ -284,10 +417,79 @@ def home() -> str:
               dotResultBox.textContent = "Error: " + error.message;
             }
           });
+
+          const errorForm = document.getElementById("errorForm");
+          const predictedXInput = document.getElementById("predictedX");
+          const predictedYInput = document.getElementById("predictedY");
+          const actualXInput = document.getElementById("actualX");
+          const actualYInput = document.getElementById("actualY");
+          const errorResultBox = document.getElementById("errorResultBox");
+
+          errorForm.addEventListener("submit", async function (event) {
+            event.preventDefault();
+
+            const predictedX = Number(predictedXInput.value);
+            const predictedY = Number(predictedYInput.value);
+            const actualX = Number(actualXInput.value);
+            const actualY = Number(actualYInput.value);
+
+            errorResultBox.textContent = "Calculating...";
+
+            try {
+              const params = new URLSearchParams({
+                predicted_x: predictedX,
+                predicted_y: predictedY,
+                actual_x: actualX,
+                actual_y: actualY,
+              });
+
+              const response = await fetch(`/calculate-error?${params.toString()}`);
+              const data = await response.json();
+
+              if (!response.ok) {
+                errorResultBox.textContent = "Error: " + (data.detail || "Unknown error");
+                return;
+              }
+
+              errorResultBox.innerHTML = `
+                <div><strong>Predicted:</strong> (${data.predicted_x}, ${data.predicted_y})</div>
+                <div><strong>Actual:</strong> (${data.actual_x}, ${data.actual_y})</div>
+                <div><strong>dx:</strong> ${data.dx}</div>
+                <div><strong>dy:</strong> ${data.dy}</div>
+                <div><strong>Euclidean error:</strong> ${data.euclidean_error_m} m</div>
+                <div><strong>Manhattan error:</strong> ${data.manhattan_error_m} m</div>
+              `;
+            } catch (error) {
+              errorResultBox.textContent = "Error: " + error.message;
+            }
+          });
         </script>
       </body>
     </html>
     """
+
+
+@app.get("/calculate-error")
+async def calculate_error(
+    predicted_x: int,
+    predicted_y: int,
+    actual_x: int,
+    actual_y: int,
+):
+    result = calculate_grid_error(
+        predicted_x=predicted_x,
+        predicted_y=predicted_y,
+        actual_x=actual_x,
+        actual_y=actual_y,
+    )
+
+    return {
+        "predicted_x": predicted_x,
+        "predicted_y": predicted_y,
+        "actual_x": actual_x,
+        "actual_y": actual_y,
+        **result,
+    }
 
 
 @app.post("/localize", response_model=LocalizationResult)
@@ -359,6 +561,8 @@ async def test_grid(
 async def test_dot(
     floorplan: UploadFile = File(...),
     query: UploadFile = File(...),
+    actual_x: Optional[int] = Form(None),
+    actual_y: Optional[int] = Form(None),
 ):
     if not os.getenv("OPENAI_API_KEY"):
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not set.")
@@ -387,29 +591,62 @@ async def test_dot(
         result = localize_dot_from_files(floorplan_path, query_path)
 
         with Image.open(floorplan_path) as img:
-          width, height = img.size
+            width, height = img.size
 
-          grid_x, grid_y = pixel_to_grid(
-              result.dot_x,
-              result.dot_y,
-              width,
-              height,
-          )
+            grid_x, grid_y = pixel_to_grid(
+                result.dot_x,
+                result.dot_y,
+                width,
+                height,
+            )
 
-        annotated_image_base64 = draw_dot_on_floorplan(
+            actual_pixel_x = None
+            actual_pixel_y = None
+            error_result = None
+
+            if actual_x is not None and actual_y is not None:
+                actual_pixel_x, actual_pixel_y = grid_to_pixel(
+                    actual_x,
+                    actual_y,
+                    width,
+                    height,
+                )
+                error_result = calculate_grid_error(
+                    predicted_x=grid_x,
+                    predicted_y=grid_y,
+                    actual_x=actual_x,
+                    actual_y=actual_y,
+                )
+
+        annotated_image_base64 = draw_dots_on_floorplan(
             floorplan_path,
-            result.dot_x,
-            result.dot_y,
+            predicted_x=result.dot_x,
+            predicted_y=result.dot_y,
+            actual_x=actual_pixel_x,
+            actual_y=actual_pixel_y,
         )
 
-        return {
-          "dot_x": result.dot_x,
-          "dot_y": result.dot_y,
-          "grid_x": grid_x,
-          "grid_y": grid_y,
-          "reasoning": result.reasoning,
-          "annotated_image_base64": annotated_image_base64,
-      }
+        response_data = {
+            "dot_x": result.dot_x,
+            "dot_y": result.dot_y,
+            "grid_x": grid_x,
+            "grid_y": grid_y,
+            "reasoning": result.reasoning,
+            "annotated_image_base64": annotated_image_base64,
+            "actual_grid_x": actual_x,
+            "actual_grid_y": actual_y,
+            "actual_pixel_x": actual_pixel_x,
+            "actual_pixel_y": actual_pixel_y,
+            "dx": None,
+            "dy": None,
+            "euclidean_error_m": None,
+            "manhattan_error_m": None,
+        }
+
+        if error_result is not None:
+            response_data.update(error_result)
+
+        return response_data
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

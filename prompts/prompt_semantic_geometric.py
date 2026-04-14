@@ -1,3 +1,13 @@
+"""
+Semantic-geometric prompt for indoor localization.
+
+This prompt instructs the model to first identify the matching area in the
+floorplan and then infer the camera position within that area using spatial
+cues such as perspective, walls, doors, and visible layout. It is used to test
+whether combining semantic matching with geometric reasoning improves the
+precision of the predicted camera position.
+"""
+
 SYSTEM_PROMPT = """
 You are an indoor localization assistant.
 You will receive:

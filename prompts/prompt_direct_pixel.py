@@ -1,3 +1,12 @@
+"""
+Baseline prompt for indoor localization.
+
+This prompt instructs the model to directly estimate a single pixel coordinate
+on the floorplan image from the query image. It is used as a simple reference
+case in testing, with minimal task structuring, in order to compare whether
+additional reasoning guidance improves localization accuracy.
+"""
+
 SYSTEM_PROMPT = """
 You are an indoor localization assistant.
 You will receive:

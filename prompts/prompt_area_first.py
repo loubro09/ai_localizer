@@ -1,3 +1,13 @@
+"""
+Area-first prompt for indoor localization.
+
+This prompt instructs the model to first identify the most likely room,
+corridor, or area shown in the query image, and then estimate a single pixel
+coordinate within that area on the floorplan. It is used to test whether
+introducing an intermediate semantic localization step improves the accuracy
+of the final camera position.
+"""
+
 SYSTEM_PROMPT = """
 You are an indoor localization assistant.
 You will receive:

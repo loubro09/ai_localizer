@@ -24,4 +24,3 @@ class DotTestResponse(BaseModel):
     dx: Optional[int] = None
     dy: Optional[int] = None
     euclidean_error_m: Optional[float] = None
-    manhattan_error_m: Optional[int] = None

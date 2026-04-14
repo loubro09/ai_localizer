@@ -60,13 +60,11 @@ def calculate_grid_error(
     dx = predicted_x - actual_x
     dy = predicted_y - actual_y
     euclidean_error = math.sqrt(dx**2 + dy**2)
-    manhattan_error = abs(dx) + abs(dy)
 
     return {
         "dx": dx,
         "dy": dy,
         "euclidean_error_m": round(euclidean_error, 3),
-        "manhattan_error_m": manhattan_error,
     }
 
 
@@ -277,7 +275,6 @@ def home() -> str:
                   <div><strong>dx:</strong> ${data.dx}</div>
                   <div><strong>dy:</strong> ${data.dy}</div>
                   <div><strong>Euclidean error:</strong> ${data.euclidean_error_m} m</div>
-                  <div><strong>Manhattan error:</strong> ${data.manhattan_error_m} m</div>
                 `;
               }
 
@@ -389,7 +386,6 @@ async def test_dot(
             "dx": None,
             "dy": None,
             "euclidean_error_m": None,
-            "manhattan_error_m": None,
         }
 
         if error_result is not None:

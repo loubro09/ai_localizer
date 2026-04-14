@@ -10,9 +10,9 @@ from schemas_dot_test import DotLocalizationResult
 
 client = OpenAI()
 
-# MODEL_NAME = "gpt-5.4"
+MODEL_NAME = "gpt-5.4"
 # MODEL_NAME = "gpt-5.4-mini"
-MODEL_NAME = "gpt-5.4-nano"
+# MODEL_NAME = "gpt-5.4-nano"
 
 MODEL_PRICING_PER_1M = {
     "gpt-5.4": {"input": 2.50, "output": 15.00},

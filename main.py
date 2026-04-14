@@ -9,10 +9,12 @@ import tempfile
 from pathlib import Path
 import base64
 import io
+import math
+from typing import Optional
 
 from PIL import Image, ImageDraw
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 
 load_dotenv()
@@ -36,16 +38,54 @@ def pixel_to_grid(
     return grid_x, grid_y
 
 
-def draw_dot_on_floorplan(image_path: str, x: int, y: int) -> str:
+def grid_to_pixel(
+    grid_x: int,
+    grid_y: int,
+    width: int,
+    height: int,
+    max_grid_x: int = 54,
+    max_grid_y: int = 44,
+) -> tuple[int, int]:
+    pixel_x = round(grid_x / max_grid_x * (width - 1))
+    pixel_y = round(grid_y / max_grid_y * (height - 1))
+    return pixel_x, pixel_y
+
+
+def calculate_grid_error(
+    predicted_x: int,
+    predicted_y: int,
+    actual_x: int,
+    actual_y: int,
+) -> dict:
+    dx = predicted_x - actual_x
+    dy = predicted_y - actual_y
+    euclidean_error = math.sqrt(dx**2 + dy**2)
+    manhattan_error = abs(dx) + abs(dy)
+
+    return {
+        "dx": dx,
+        "dy": dy,
+        "euclidean_error_m": round(euclidean_error, 3),
+        "manhattan_error_m": manhattan_error,
+    }
+
+
+def draw_dots_on_floorplan(
+    image_path: str,
+    predicted_x: int,
+    predicted_y: int,
+    actual_x: Optional[int] = None,
+    actual_y: Optional[int] = None,
+) -> str:
     with Image.open(image_path).convert("RGBA") as img:
         draw = ImageDraw.Draw(img)
-
         radius = max(8, min(img.size) // 80)
 
-        left = x - radius
-        top = y - radius
-        right = x + radius
-        bottom = y + radius
+        # Predicted dot = red
+        left = predicted_x - radius
+        top = predicted_y - radius
+        right = predicted_x + radius
+        bottom = predicted_y + radius
 
         draw.ellipse((left, top, right, bottom), fill=(255, 0, 0, 255))
         draw.ellipse(
@@ -53,6 +93,20 @@ def draw_dot_on_floorplan(image_path: str, x: int, y: int) -> str:
             outline=(255, 255, 255, 255),
             width=2,
         )
+
+        # Actual dot = green
+        if actual_x is not None and actual_y is not None:
+            left = actual_x - radius
+            top = actual_y - radius
+            right = actual_x + radius
+            bottom = actual_y + radius
+
+            draw.ellipse((left, top, right, bottom), fill=(0, 180, 0, 255))
+            draw.ellipse(
+                (left - 2, top - 2, right + 2, bottom + 2),
+                outline=(255, 255, 255, 255),
+                width=2,
+            )
 
         buffer = io.BytesIO()
         img.save(buffer, format="PNG")
@@ -78,6 +132,17 @@ def home() -> str:
             <input type="file" id="dotQueryInput" name="query" accept="image/*" required>
           </div>
 
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 320px; margin-bottom: 12px;">
+            <div>
+              <label>Actual X (optional):</label><br>
+              <input type="number" id="actualDotX" name="actual_x">
+            </div>
+            <div>
+              <label>Actual Y (optional):</label><br>
+              <input type="number" id="actualDotY" name="actual_y">
+            </div>
+          </div>
+
           <button type="submit">Run Test</button>
         </form>
 
@@ -89,9 +154,12 @@ def home() -> str:
               alt="Floorplan preview"
               style="width: 100%; border: 1px solid #ccc; display: none;"
             />
+            <div style="margin-top: 8px; color: #555;">
+              Red = predicted, Green = actual
+            </div>
           </div>
 
-          <div style="flex: 0 0 300px;">
+          <div style="flex: 0 0 320px;">
             <h2>Query Preview</h2>
             <img
               id="queryPreview"
@@ -111,6 +179,8 @@ def home() -> str:
           const dotTestForm = document.getElementById("dotTestForm");
           const dotFloorplanInput = document.getElementById("dotFloorplanInput");
           const dotQueryInput = document.getElementById("dotQueryInput");
+          const actualDotXInput = document.getElementById("actualDotX");
+          const actualDotYInput = document.getElementById("actualDotY");
           const floorplanPreview = document.getElementById("floorplanPreview");
           const queryPreview = document.getElementById("queryPreview");
           const dotResultBox = document.getElementById("dotResultBox");
@@ -162,6 +232,8 @@ def home() -> str:
 
             const floorplanFile = dotFloorplanInput.files[0];
             const queryFile = dotQueryInput.files[0];
+            const actualDotX = actualDotXInput.value;
+            const actualDotY = actualDotYInput.value;
 
             if (!floorplanFile || !queryFile) {
               dotResultBox.textContent = "Please select both a floorplan image and a query image.";
@@ -171,6 +243,13 @@ def home() -> str:
             const formData = new FormData();
             formData.append("floorplan", floorplanFile);
             formData.append("query", queryFile);
+
+            if (actualDotX !== "") {
+              formData.append("actual_x", actualDotX);
+            }
+            if (actualDotY !== "") {
+              formData.append("actual_y", actualDotY);
+            }
 
             dotResultBox.textContent = "Running dot test...";
 
@@ -187,6 +266,21 @@ def home() -> str:
                 return;
               }
 
+              let extraHtml = "";
+              if (data.actual_grid_x !== null && data.actual_grid_y !== null) {
+                extraHtml = `
+                  <hr style="margin: 10px 0;">
+                  <div><strong>actual_grid_x:</strong> ${data.actual_grid_x}</div>
+                  <div><strong>actual_grid_y:</strong> ${data.actual_grid_y}</div>
+                  <div><strong>actual_pixel_x:</strong> ${data.actual_pixel_x}</div>
+                  <div><strong>actual_pixel_y:</strong> ${data.actual_pixel_y}</div>
+                  <div><strong>dx:</strong> ${data.dx}</div>
+                  <div><strong>dy:</strong> ${data.dy}</div>
+                  <div><strong>Euclidean error:</strong> ${data.euclidean_error_m} m</div>
+                  <div><strong>Manhattan error:</strong> ${data.manhattan_error_m} m</div>
+                `;
+              }
+
               dotResultBox.innerHTML = `
                 <div style="margin-bottom: 10px;"><strong>Predicted dot location</strong></div>
                 <div><strong>dot_x:</strong> ${data.dot_x}</div>
@@ -194,6 +288,7 @@ def home() -> str:
                 <div><strong>grid_x:</strong> ${data.grid_x}</div>
                 <div><strong>grid_y:</strong> ${data.grid_y}</div>
                 <div style="margin-top: 10px;"><strong>Reasoning:</strong> ${data.reasoning}</div>
+                ${extraHtml}
               `;
 
               floorplanPreview.src = "data:image/png;base64," + data.annotated_image_base64;
@@ -212,6 +307,8 @@ def home() -> str:
 async def test_dot(
     floorplan: UploadFile = File(...),
     query: UploadFile = File(...),
+    actual_x: Optional[int] = Form(None),
+    actual_y: Optional[int] = Form(None),
 ) -> DotTestResponse:
     if not os.getenv("OPENAI_API_KEY"):
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not set.")
@@ -252,20 +349,53 @@ async def test_dot(
             height,
         )
 
-        annotated_image_base64 = draw_dot_on_floorplan(
+        actual_pixel_x = None
+        actual_pixel_y = None
+        error_result = None
+
+        if actual_x is not None and actual_y is not None:
+            actual_pixel_x, actual_pixel_y = grid_to_pixel(
+                actual_x,
+                actual_y,
+                width,
+                height,
+            )
+            error_result = calculate_grid_error(
+                predicted_x=grid_x,
+                predicted_y=grid_y,
+                actual_x=actual_x,
+                actual_y=actual_y,
+            )
+
+        annotated_image_base64 = draw_dots_on_floorplan(
             floorplan_path,
-            result.dot_x,
-            result.dot_y,
+            predicted_x=result.dot_x,
+            predicted_y=result.dot_y,
+            actual_x=actual_pixel_x,
+            actual_y=actual_pixel_y,
         )
 
-        return {
+        response_data = {
             "dot_x": result.dot_x,
             "dot_y": result.dot_y,
             "grid_x": grid_x,
             "grid_y": grid_y,
             "reasoning": result.reasoning,
             "annotated_image_base64": annotated_image_base64,
+            "actual_grid_x": actual_x,
+            "actual_grid_y": actual_y,
+            "actual_pixel_x": actual_pixel_x,
+            "actual_pixel_y": actual_pixel_y,
+            "dx": None,
+            "dy": None,
+            "euclidean_error_m": None,
+            "manhattan_error_m": None,
         }
+
+        if error_result is not None:
+            response_data.update(error_result)
+
+        return response_data
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

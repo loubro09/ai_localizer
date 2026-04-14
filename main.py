@@ -19,14 +19,8 @@ from fastapi.responses import HTMLResponse
 
 load_dotenv()
 
-from openai_service import localize_from_files
-from schemas import LocalizationResult
-
-from openai_service_grid_test import extract_grid_dot_coordinates
-from schemas_grid_test import GridDotResult
-
 from openai_service_dot_test import localize_dot_from_files
-from schemas_dot_test import DotLocalizationResult
+from schemas_dot_test import DotTestResponse
 
 app = FastAPI(title="Floorplan Localizer")
 
@@ -124,26 +118,8 @@ def draw_dots_on_floorplan(
 def home() -> str:
     return """
     <html>
-      <body style="font-family: sans-serif; max-width: 1000px; margin: 40px auto;">
+      <body style="font-family: sans-serif; max-width: 1100px; margin: 40px auto;">
         <h1>Floorplan Localizer</h1>
-
-        <form id="localizeForm" enctype="multipart/form-data">
-          <div style="margin-bottom: 12px;">
-            <label>Floorplan PDF:</label><br>
-            <input type="file" id="floorplanInput" name="floorplan" accept="application/pdf" required>
-          </div>
-
-          <div style="margin-bottom: 12px;">
-            <label>Query image:</label><br>
-            <input type="file" id="queryInput" name="query" accept="image/*" required>
-          </div>
-
-          <button type="submit">Localize</button>
-        </form>
-
-        <hr style="margin: 30px 0;">
-
-        <h1>Dot Test</h1>
 
         <form id="dotTestForm" enctype="multipart/form-data" style="margin-bottom: 24px;">
           <div style="margin-bottom: 12px;">
@@ -167,15 +143,15 @@ def home() -> str:
             </div>
           </div>
 
-          <button type="submit">Run Dot Test</button>
+          <button type="submit">Run Test</button>
         </form>
 
         <div style="display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap;">
-          <div style="flex: 1 1 650px; min-width: 300px;">
-            <h2>Annotated Floorplan</h2>
+          <div style="flex: 1 1 700px; min-width: 300px;">
+            <h2>Floorplan Preview</h2>
             <img
-              id="dotResultImage"
-              alt="Annotated floorplan"
+              id="floorplanPreview"
+              alt="Floorplan preview"
               style="width: 100%; border: 1px solid #ccc; display: none;"
             />
             <div style="margin-top: 8px; color: #555;">
@@ -184,6 +160,13 @@ def home() -> str:
           </div>
 
           <div style="flex: 0 0 320px;">
+            <h2>Query Preview</h2>
+            <img
+              id="queryPreview"
+              alt="Query image preview"
+              style="width: 100%; max-width: 240px; border: 1px solid #ccc; display: none; margin-bottom: 16px;"
+            />
+
             <h2>Dot Test Result</h2>
             <div
               id="dotResultBox"
@@ -192,158 +175,57 @@ def home() -> str:
           </div>
         </div>
 
-        <hr style="margin: 30px 0;">
-
-        <h1>Error Calculator</h1>
-
-        <form id="errorForm" style="margin-bottom: 24px;">
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 420px;">
-            <div>
-              <label>Predicted X:</label><br>
-              <input type="number" id="predictedX" required>
-            </div>
-            <div>
-              <label>Predicted Y:</label><br>
-              <input type="number" id="predictedY" required>
-            </div>
-            <div>
-              <label>Actual X:</label><br>
-              <input type="number" id="actualX" required>
-            </div>
-            <div>
-              <label>Actual Y:</label><br>
-              <input type="number" id="actualY" required>
-            </div>
-          </div>
-
-          <button type="submit" style="margin-top: 12px;">Calculate Error</button>
-        </form>
-
-        <div
-          id="errorResultBox"
-          style="border: 1px solid #ccc; padding: 12px; min-height: 80px; background: #f9f9f9; max-width: 420px;"
-        >No result yet.</div>
-
-        <div style="display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; margin-top: 30px;">
-          <div style="flex: 1 1 650px; min-width: 300px;">
-            <h2>Floorplan Preview</h2>
-            <iframe
-              id="pdfPreview"
-              style="width: 100%; height: 800px; border: 1px solid #ccc;"
-            ></iframe>
-          </div>
-
-          <div style="flex: 0 0 300px;">
-            <h2>Query Preview</h2>
-            <img
-              id="queryPreview"
-              alt="Query image preview"
-              style="width: 100%; max-width: 240px; border: 1px solid #ccc; display: none; margin-bottom: 16px;"
-            />
-
-            <h2>Result</h2>
-            <div
-              id="resultBox"
-              style="border: 1px solid #ccc; padding: 12px; min-height: 80px; background: #f9f9f9;"
-            >No result yet.</div>
-          </div>
-        </div>
-
         <script>
-          const form = document.getElementById("localizeForm");
-          const floorplanInput = document.getElementById("floorplanInput");
-          const queryInput = document.getElementById("queryInput");
-          const pdfPreview = document.getElementById("pdfPreview");
-          const queryPreview = document.getElementById("queryPreview");
-          const resultBox = document.getElementById("resultBox");
-
-          floorplanInput.addEventListener("change", function () {
-            const file = this.files[0];
-            if (!file) {
-              pdfPreview.src = "";
-              return;
-            }
-            if (file.type !== "application/pdf") {
-              alert("Please upload a PDF file for the floorplan.");
-              floorplanInput.value = "";
-              pdfPreview.src = "";
-              return;
-            }
-            pdfPreview.src = URL.createObjectURL(file);
-          });
-
-          queryInput.addEventListener("change", function () {
-            const file = this.files[0];
-            if (!file) {
-              queryPreview.src = "";
-              queryPreview.style.display = "none";
-              return;
-            }
-            if (!file.type.startsWith("image/")) {
-              alert("Please upload an image file for the query.");
-              queryInput.value = "";
-              queryPreview.src = "";
-              queryPreview.style.display = "none";
-              return;
-            }
-            queryPreview.src = URL.createObjectURL(file);
-            queryPreview.style.display = "block";
-          });
-
-          form.addEventListener("submit", async function (event) {
-            event.preventDefault();
-
-            const floorplanFile = floorplanInput.files[0];
-            const queryFile = queryInput.files[0];
-
-            if (!floorplanFile || !queryFile) {
-              resultBox.textContent = "Please select both a floorplan PDF and a query image.";
-              return;
-            }
-
-            const formData = new FormData();
-            formData.append("floorplan", floorplanFile);
-            formData.append("query", queryFile);
-
-            resultBox.textContent = "Localizing...";
-
-            try {
-              const response = await fetch("/localize", {
-                method: "POST",
-                body: formData
-              });
-
-              const data = await response.json();
-
-              if (!response.ok) {
-                resultBox.textContent = "Error: " + (data.detail || "Unknown error");
-                return;
-              }
-
-              resultBox.innerHTML = `
-                <div style="margin-bottom: 10px;"><strong>Top 5 candidate locations</strong></div>
-                ${data.candidates.map((candidate, index) => `
-                  <div style="border: 1px solid #ddd; background: white; padding: 10px; margin-bottom: 10px;">
-                    <div><strong>#${index + 1}</strong></div>
-                    <div><strong>X:</strong> ${candidate.x}</div>
-                    <div><strong>Y:</strong> ${candidate.y}</div>
-                    <div><strong>Confidence:</strong> ${(candidate.confidence * 100).toFixed(1)}%</div>
-                    <div><strong>Reasoning:</strong> ${candidate.reasoning}</div>
-                  </div>
-                `).join("")}
-              `;
-            } catch (error) {
-              resultBox.textContent = "Error: " + error.message;
-            }
-          });
-
           const dotTestForm = document.getElementById("dotTestForm");
           const dotFloorplanInput = document.getElementById("dotFloorplanInput");
           const dotQueryInput = document.getElementById("dotQueryInput");
           const actualDotXInput = document.getElementById("actualDotX");
           const actualDotYInput = document.getElementById("actualDotY");
-          const dotResultImage = document.getElementById("dotResultImage");
+          const floorplanPreview = document.getElementById("floorplanPreview");
+          const queryPreview = document.getElementById("queryPreview");
           const dotResultBox = document.getElementById("dotResultBox");
+
+          dotFloorplanInput.addEventListener("change", function () {
+            const file = this.files[0];
+
+            if (!file) {
+              floorplanPreview.src = "";
+              floorplanPreview.style.display = "none";
+              return;
+            }
+
+            if (!file.type.startsWith("image/")) {
+              alert("Please upload an image file for the floorplan.");
+              dotFloorplanInput.value = "";
+              floorplanPreview.src = "";
+              floorplanPreview.style.display = "none";
+              return;
+            }
+
+            floorplanPreview.src = URL.createObjectURL(file);
+            floorplanPreview.style.display = "block";
+          });
+
+          dotQueryInput.addEventListener("change", function () {
+            const file = this.files[0];
+
+            if (!file) {
+              queryPreview.src = "";
+              queryPreview.style.display = "none";
+              return;
+            }
+
+            if (!file.type.startsWith("image/")) {
+              alert("Please upload an image file for the query.");
+              dotQueryInput.value = "";
+              queryPreview.src = "";
+              queryPreview.style.display = "none";
+              return;
+            }
+
+            queryPreview.src = URL.createObjectURL(file);
+            queryPreview.style.display = "block";
+          });
 
           dotTestForm.addEventListener("submit", async function (event) {
             event.preventDefault();
@@ -370,8 +252,6 @@ def home() -> str:
             }
 
             dotResultBox.textContent = "Running dot test...";
-            dotResultImage.style.display = "none";
-            dotResultImage.src = "";
 
             try {
               const response = await fetch("/test-dot", {
@@ -411,56 +291,10 @@ def home() -> str:
                 ${extraHtml}
               `;
 
-              dotResultImage.src = "data:image/png;base64," + data.annotated_image_base64;
-              dotResultImage.style.display = "block";
+              floorplanPreview.src = "data:image/png;base64," + data.annotated_image_base64;
+              floorplanPreview.style.display = "block";
             } catch (error) {
               dotResultBox.textContent = "Error: " + error.message;
-            }
-          });
-
-          const errorForm = document.getElementById("errorForm");
-          const predictedXInput = document.getElementById("predictedX");
-          const predictedYInput = document.getElementById("predictedY");
-          const actualXInput = document.getElementById("actualX");
-          const actualYInput = document.getElementById("actualY");
-          const errorResultBox = document.getElementById("errorResultBox");
-
-          errorForm.addEventListener("submit", async function (event) {
-            event.preventDefault();
-
-            const predictedX = Number(predictedXInput.value);
-            const predictedY = Number(predictedYInput.value);
-            const actualX = Number(actualXInput.value);
-            const actualY = Number(actualYInput.value);
-
-            errorResultBox.textContent = "Calculating...";
-
-            try {
-              const params = new URLSearchParams({
-                predicted_x: predictedX,
-                predicted_y: predictedY,
-                actual_x: actualX,
-                actual_y: actualY,
-              });
-
-              const response = await fetch(`/calculate-error?${params.toString()}`);
-              const data = await response.json();
-
-              if (!response.ok) {
-                errorResultBox.textContent = "Error: " + (data.detail || "Unknown error");
-                return;
-              }
-
-              errorResultBox.innerHTML = `
-                <div><strong>Predicted:</strong> (${data.predicted_x}, ${data.predicted_y})</div>
-                <div><strong>Actual:</strong> (${data.actual_x}, ${data.actual_y})</div>
-                <div><strong>dx:</strong> ${data.dx}</div>
-                <div><strong>dy:</strong> ${data.dy}</div>
-                <div><strong>Euclidean error:</strong> ${data.euclidean_error_m} m</div>
-                <div><strong>Manhattan error:</strong> ${data.manhattan_error_m} m</div>
-              `;
-            } catch (error) {
-              errorResultBox.textContent = "Error: " + error.message;
             }
           });
         </script>
@@ -469,106 +303,21 @@ def home() -> str:
     """
 
 
-@app.get("/calculate-error")
-async def calculate_error(
-    predicted_x: int,
-    predicted_y: int,
-    actual_x: int,
-    actual_y: int,
-):
-    result = calculate_grid_error(
-        predicted_x=predicted_x,
-        predicted_y=predicted_y,
-        actual_x=actual_x,
-        actual_y=actual_y,
-    )
-
-    return {
-        "predicted_x": predicted_x,
-        "predicted_y": predicted_y,
-        "actual_x": actual_x,
-        "actual_y": actual_y,
-        **result,
-    }
-
-
-@app.post("/localize", response_model=LocalizationResult)
-async def localize(
-    floorplan: UploadFile = File(...),
-    query: UploadFile = File(...),
-) -> LocalizationResult:
-    if not os.getenv("OPENAI_API_KEY"):
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not set.")
-
-    if floorplan.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Floorplan must be a PDF file.")
-
-    if not query.content_type or not query.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Query must be an image file.")
-
-    temp_dir = tempfile.mkdtemp(prefix="floorplan_localizer_")
-
-    try:
-        floorplan_path = os.path.join(temp_dir, "floorplan.pdf")
-        query_ext = Path(query.filename or "query.jpg").suffix or ".jpg"
-        query_path = os.path.join(temp_dir, f"query{query_ext}")
-
-        with open(floorplan_path, "wb") as f:
-            shutil.copyfileobj(floorplan.file, f)
-
-        with open(query_path, "wb") as f:
-            shutil.copyfileobj(query.file, f)
-
-        result = localize_from_files(floorplan_path, query_path)
-        print("RESULT FROM OPENAI SERVICE:", repr(result))
-        return result
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-@app.post("/test-grid", response_model=GridDotResult)
-async def test_grid(
-    floorplan: UploadFile = File(...),
-) -> GridDotResult:
-    if not os.getenv("OPENAI_API_KEY"):
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not set.")
-
-    if floorplan.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Floorplan must be a PDF file.")
-
-    temp_dir = tempfile.mkdtemp(prefix="grid_test_")
-
-    try:
-        floorplan_path = os.path.join(temp_dir, "floorplan_with_dots.pdf")
-
-        with open(floorplan_path, "wb") as f:
-            shutil.copyfileobj(floorplan.file, f)
-
-        result = extract_grid_dot_coordinates(floorplan_path)
-        print("GRID TEST RESULT:", result.model_dump())
-        return result
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-@app.post("/test-dot")
+@app.post("/test-dot", response_model=DotTestResponse)
 async def test_dot(
     floorplan: UploadFile = File(...),
     query: UploadFile = File(...),
     actual_x: Optional[int] = Form(None),
     actual_y: Optional[int] = Form(None),
-):
+) -> DotTestResponse:
     if not os.getenv("OPENAI_API_KEY"):
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not set.")
 
     if not floorplan.content_type or not floorplan.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Floorplan must be an image file for dot test (recommended: PNG).")
+        raise HTTPException(
+            status_code=400,
+            detail="Floorplan must be an image file for dot test (recommended: PNG).",
+        )
 
     if not query.content_type or not query.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Query must be an image file.")
@@ -593,30 +342,30 @@ async def test_dot(
         with Image.open(floorplan_path) as img:
             width, height = img.size
 
-            grid_x, grid_y = pixel_to_grid(
-                result.dot_x,
-                result.dot_y,
+        grid_x, grid_y = pixel_to_grid(
+            result.dot_x,
+            result.dot_y,
+            width,
+            height,
+        )
+
+        actual_pixel_x = None
+        actual_pixel_y = None
+        error_result = None
+
+        if actual_x is not None and actual_y is not None:
+            actual_pixel_x, actual_pixel_y = grid_to_pixel(
+                actual_x,
+                actual_y,
                 width,
                 height,
             )
-
-            actual_pixel_x = None
-            actual_pixel_y = None
-            error_result = None
-
-            if actual_x is not None and actual_y is not None:
-                actual_pixel_x, actual_pixel_y = grid_to_pixel(
-                    actual_x,
-                    actual_y,
-                    width,
-                    height,
-                )
-                error_result = calculate_grid_error(
-                    predicted_x=grid_x,
-                    predicted_y=grid_y,
-                    actual_x=actual_x,
-                    actual_y=actual_y,
-                )
+            error_result = calculate_grid_error(
+                predicted_x=grid_x,
+                predicted_y=grid_y,
+                actual_x=actual_x,
+                actual_y=actual_y,
+            )
 
         annotated_image_base64 = draw_dots_on_floorplan(
             floorplan_path,

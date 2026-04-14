@@ -9,7 +9,7 @@ from PIL import Image
 from schemas_dot_test import DotLocalizationResult
 
 #from prompts.prompt_area_first import SYSTEM_PROMPT, USER_PROMPT
-#rom prompts.prompt_direct_pixel import SYSTEM_PROMPT, USER_PROMPT
+#from prompts.prompt_direct_pixel import SYSTEM_PROMPT, USER_PROMPT
 from prompts.prompt_semantic_geometric import SYSTEM_PROMPT, USER_PROMPT
 
 client = OpenAI()

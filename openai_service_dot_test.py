@@ -10,7 +10,8 @@ from schemas_dot_test import DotLocalizationResult
 
 #from prompts.prompt_area_first import SYSTEM_PROMPT, USER_PROMPT
 #from prompts.prompt_direct_pixel import SYSTEM_PROMPT, USER_PROMPT
-from prompts.prompt_semantic_geometric import SYSTEM_PROMPT, USER_PROMPT
+#from prompts.prompt_semantic_geometric import SYSTEM_PROMPT, USER_PROMPT
+from prompts.prompt_double import SYSTEM_PROMPT as DOUBLE_SYSTEM_PROMPT, USER_PROMPT as DOUBLE_USER_PROMPT
 
 client = OpenAI()
 
@@ -127,6 +128,93 @@ def localize_dot_from_files(floorplan_image_path: str, query_path: str) -> DotLo
 
     print("DOT OUTPUT_PARSED:", repr(response.output_parsed))
     print("DOT OUTPUT_TEXT:", repr(response.output_text))
+
+    if response.output_parsed is None:
+        raise ValueError(f"Model returned no parsed output. Raw text: {response.output_text!r}")
+
+    return response.output_parsed
+
+def localize_dot_from_3_files(
+    floorplan_image_path: str,
+    query1_path: str,
+    query2_path: str,
+) -> DotLocalizationResult:
+    floorplan_path_obj = Path(floorplan_image_path)
+    query1_path_obj = Path(query1_path)
+    query2_path_obj = Path(query2_path)
+
+    floorplan_mime_type, _ = mimetypes.guess_type(floorplan_path_obj.name)
+    query1_mime_type, _ = mimetypes.guess_type(query1_path_obj.name)
+    query2_mime_type, _ = mimetypes.guess_type(query2_path_obj.name)
+
+    if floorplan_mime_type is None:
+        floorplan_mime_type = "image/png"
+    if query1_mime_type is None:
+        query1_mime_type = "image/jpeg"
+    if query2_mime_type is None:
+        query2_mime_type = "image/jpeg"
+
+    with Image.open(floorplan_image_path) as img:
+        width, height = img.size
+
+    floorplan_b64 = _file_to_base64(floorplan_image_path)
+    query1_b64 = _file_to_base64(query1_path)
+    query2_b64 = _file_to_base64(query2_path)
+
+    response = client.responses.parse(
+        model=MODEL_NAME,
+        input=[
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": DOUBLE_SYSTEM_PROMPT.format(
+                            width=width,
+                            height=height,
+                            max_x=width - 1,
+                            max_y=height - 1,
+                        )
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": DOUBLE_USER_PROMPT
+                    },
+                    {
+                        "type": "input_image",
+                        "image_url": f"data:{floorplan_mime_type};base64,{floorplan_b64}",
+                    },
+                    {
+                        "type": "input_image",
+                        "image_url": f"data:{query1_mime_type};base64,{query1_b64}",
+                    },
+                    {
+                        "type": "input_image",
+                        "image_url": f"data:{query2_mime_type};base64,{query2_b64}",
+                    },
+                ],
+            },
+        ],
+        text_format=DotLocalizationResult,
+    )
+
+    usage_info = calculate_request_cost(MODEL_NAME, response.usage)
+
+    print("\n===== OPENAI DOUBLE DOT TEST USAGE =====")
+    print("Model:", MODEL_NAME)
+    print("Input tokens:", usage_info["input_tokens"])
+    print("Output tokens:", usage_info["output_tokens"])
+    print("Reasoning tokens:", usage_info["reasoning_tokens"])
+    print("Estimated cost (USD):", usage_info["estimated_cost_usd"])
+    print("========================================\n")
+
+    print("DOUBLE DOT OUTPUT_PARSED:", repr(response.output_parsed))
+    print("DOUBLE DOT OUTPUT_TEXT:", repr(response.output_text))
 
     if response.output_parsed is None:
         raise ValueError(f"Model returned no parsed output. Raw text: {response.output_text!r}")

@@ -67,6 +67,10 @@ class TestGroup:
 
     def as_dict(self) -> dict[str, Any]:
         errors = [c.euclidean_error for c in self.cases if c.euclidean_error is not None]
+        min_error = min(errors) if errors else None
+        max_error = max(errors) if errors else None
+        spread = (max_error - min_error) if errors else None
+
         return {
             "index": self.index,
             "group_label": f"{self.floor} | {self.image_id}",
@@ -77,8 +81,9 @@ class TestGroup:
             "true_y": self.true_y,
             "map_image": map_filename_for_floor(self.floor),
             "case_count": len(self.cases),
-            "min_error": min(errors) if errors else None,
-            "max_error": max(errors) if errors else None,
+            "min_error": min_error,
+            "max_error": max_error,
+            "spread": spread,
             "cases": [case.as_dict() for case in self.cases],
         }
 

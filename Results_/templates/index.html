@@ -135,6 +135,7 @@
           <div class="field"><span class="label">Tests in Group</span><span id="caseCount" class="value"></span></div>
           <div class="field"><span class="label">Actual XY</span><span id="actualXY" class="value"></span></div>
           <div class="field"><span class="label">Error Range</span><span id="errorRange" class="value"></span></div>
+          <div class="field"><span class="label">Spread</span><span id="spread" class="value"></span></div>
         </div>
 
         <div class="reasoning-list" id="reasoningList"></div>
@@ -158,6 +159,7 @@
       caseCount: document.getElementById('caseCount'),
       actualXY: document.getElementById('actualXY'),
       errorRange: document.getElementById('errorRange'),
+      spread: document.getElementById('spread'),
     };
 
     function renderCases(cases) {
@@ -190,9 +192,12 @@
       fields.imageType.textContent = data.image_type;
       fields.caseCount.textContent = String(data.case_count);
       fields.actualXY.textContent = `(${data.true_x}, ${data.true_y})`;
-      const minErr = data.min_error === null ? '—' : data.min_error;
-      const maxErr = data.max_error === null ? '—' : data.max_error;
+      const minErr = data.min_error === null ? '—' : Number(data.min_error).toFixed(3);
+      const maxErr = data.max_error === null ? '—' : Number(data.max_error).toFixed(3);
+      const spread = data.spread === null ? '—' : Number(data.spread).toFixed(3);
+
       fields.errorRange.textContent = `${minErr} to ${maxErr}`;
+      fields.spread.textContent = spread;
       renderCases(data.cases);
       mapImage.src = `/api/groups/${index}/map?ts=${Date.now()}`;
       slider.value = String(index);

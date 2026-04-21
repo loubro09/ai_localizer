@@ -49,3 +49,6 @@ export SHEET_NAMES="Area prompt,Pixel prompt,Semantic prompt,Double prompt,Gray 
 
 ## Limit Excel loading to selected sheets
 If your workbook contains extra sheets, set `SHEET_NAMES` as a comma-separated list. Only those sheets will be loaded.
+
+export SHEET_NAMES="Area prompt,Pixel prompt,Semantic prompt,Gray Scale,Low Light"
+python -m uvicorn app:app --reload

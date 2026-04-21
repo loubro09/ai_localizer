@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Floorplan Test Group Viewer</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --border: #d8dee4;
+      --text: #1f2937;
+      --muted: #5f6b7a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 1500px;
+      margin: 24px auto;
+      padding: 0 18px 24px;
+    }
+    h1 { margin: 0 0 16px; }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(560px, 1.1fr) minmax(420px, 0.9fr);
+      gap: 20px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+    .map-box img {
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: white;
+      display: block;
+    }
+    .controls { display: grid; gap: 10px; margin-bottom: 16px; }
+    input[type="range"] { width: 100%; }
+    .top-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px 14px;
+      margin-top: 8px;
+    }
+    .field, .case-card {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+    .field .label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .field .value { font-size: 16px; font-weight: 600; word-break: break-word; }
+    .legend { display: flex; gap: 16px; margin-top: 10px; font-size: 14px; flex-wrap: wrap; }
+    .dot { display:inline-block; width:12px; height:12px; border-radius:999px; margin-right:6px; vertical-align:middle; }
+    .pred { background:#dc2626; }
+    .actual { background:#16a34a; }
+    .line { background:#fb923c; }
+    .reasoning-list { display: grid; gap: 12px; margin-top: 14px; }
+    .case-card h3 { margin: 0 0 8px; font-size: 16px; }
+    .meta { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+    .reasoning { white-space: pre-wrap; line-height: 1.5; }
+    button {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: white;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    @media (max-width: 1020px) {
+      .layout { grid-template-columns: 1fr; }
+      .summary-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Floorplan Test Group Viewer</h1>
+    <div class="layout">
+      <section class="panel">
+        <div class="top-row">
+          <strong id="mapTitle">{{ first_group.group_label }}</strong>
+          <div>
+            <button id="prevBtn" type="button">Previous</button>
+            <button id="nextBtn" type="button">Next</button>
+          </div>
+        </div>
+        <div class="controls">
+          <label for="groupSlider">Group slider</label>
+          <input id="groupSlider" type="range" min="0" max="{{ max_index }}" value="0" step="1" />
+          <div>
+            Showing group <strong id="groupNumber">1</strong> of <strong>{{ group_count }}</strong>
+          </div>
+        </div>
+        <div class="map-box">
+          <img id="mapImage" src="/api/groups/0/map" alt="Annotated map" />
+        </div>
+        <div class="legend">
+          <div><span class="dot actual"></span>Actual value</div>
+          <div><span class="dot pred"></span>Predicted values</div>
+          <div><span class="dot line"></span>Distance lines</div>
+        </div>
+      </section>
+
+      <aside class="panel">
+        <div class="summary-grid">
+          <div class="field"><span class="label">Floor</span><span id="floor" class="value"></span></div>
+          <div class="field"><span class="label">Image ID</span><span id="imageId" class="value"></span></div>
+          <div class="field"><span class="label">Image Type</span><span id="imageType" class="value"></span></div>
+          <div class="field"><span class="label">Tests in Group</span><span id="caseCount" class="value"></span></div>
+          <div class="field"><span class="label">Actual XY</span><span id="actualXY" class="value"></span></div>
+          <div class="field"><span class="label">Error Range</span><span id="errorRange" class="value"></span></div>
+        </div>
+
+        <div class="reasoning-list" id="reasoningList"></div>
+      </aside>
+    </div>
+  </div>
+
+  <script>
+    const slider = document.getElementById('groupSlider');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const mapImage = document.getElementById('mapImage');
+    const reasoningList = document.getElementById('reasoningList');
+
+    const fields = {
+      mapTitle: document.getElementById('mapTitle'),
+      groupNumber: document.getElementById('groupNumber'),
+      floor: document.getElementById('floor'),
+      imageId: document.getElementById('imageId'),
+      imageType: document.getElementById('imageType'),
+      caseCount: document.getElementById('caseCount'),
+      actualXY: document.getElementById('actualXY'),
+      errorRange: document.getElementById('errorRange'),
+    };
+
+    function renderCases(cases) {
+      reasoningList.innerHTML = '';
+      for (const [idx, item] of cases.entries()) {
+        const card = document.createElement('div');
+        card.className = 'case-card';
+        const errorText = item.euclidean_error === null ? '—' : item.euclidean_error;
+        const sheetText = item.source_sheet ? ` | ${item.source_sheet}` : '';
+        card.innerHTML = `
+          <h3>${idx + 1}. ${item.test_id}</h3>
+          <div class="meta">Predicted: (${item.predicted_x}, ${item.predicted_y}) | Error: ${errorText}${sheetText}</div>
+          <div class="reasoning">${item.reasoning || 'No reasoning available.'}</div>
+        `;
+        reasoningList.appendChild(card);
+      }
+    }
+
+    async function loadGroup(index) {
+      const response = await fetch(`/api/groups/${index}`);
+      if (!response.ok) {
+        alert('Failed to load group');
+        return;
+      }
+      const data = await response.json();
+      fields.mapTitle.textContent = data.group_label;
+      fields.groupNumber.textContent = String(index + 1);
+      fields.floor.textContent = data.floor;
+      fields.imageId.textContent = data.image_id;
+      fields.imageType.textContent = data.image_type;
+      fields.caseCount.textContent = String(data.case_count);
+      fields.actualXY.textContent = `(${data.true_x}, ${data.true_y})`;
+      const minErr = data.min_error === null ? '—' : data.min_error;
+      const maxErr = data.max_error === null ? '—' : data.max_error;
+      fields.errorRange.textContent = `${minErr} to ${maxErr}`;
+      renderCases(data.cases);
+      mapImage.src = `/api/groups/${index}/map?ts=${Date.now()}`;
+      slider.value = String(index);
+    }
+
+    slider.addEventListener('input', () => loadGroup(Number(slider.value)));
+    prevBtn.addEventListener('click', () => loadGroup(Math.max(0, Number(slider.value) - 1)));
+    nextBtn.addEventListener('click', () => loadGroup(Math.min(Number(slider.max), Number(slider.value) + 1)));
+
+    loadGroup(0);
+  </script>
+</body>
+</html>
